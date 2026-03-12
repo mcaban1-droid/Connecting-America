@@ -7,6 +7,7 @@
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Nunito', sans-serif; }
@@ -638,6 +639,109 @@ function TeacherDashboard({ db, setDb, onLogout }) {
     showSnack(`Restocked +${qty}!`, "success");
   };
 
+  // ── Import from Excel
+  const [importOpen, setImportOpen] = useState(false);
+  const [importPreview, setImportPreview] = useState(null);
+  const [importFile, setImportFile] = useState(null);
+
+  const handleImportFile = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setImportFile(file);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const wb = XLSX.read(ev.target.result, { type: "array" });
+        const preview = [];
+        wb.SheetNames.forEach(sheetName => {
+          if (sheetName.toLowerCase() === "sheet1" || sheetName.toLowerCase() === "summary") return;
+          const ws = wb.Sheets[sheetName];
+          const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+          if (rows.length < 2) return;
+          // Find header row
+          const headerRow = rows[0].map(h => String(h || "").toLowerCase().trim());
+          const dateIdx = headerRow.findIndex(h => h.includes("date"));
+          const debitIdx = headerRow.findIndex(h => h.includes("debit"));
+          const creditIdx = headerRow.findIndex(h => h.includes("credit"));
+          const descIdx = headerRow.findIndex(h => h.includes("desc") || h.includes("note") || h.includes("memo"));
+          const balIdx = headerRow.findIndex(h => h.includes("bal"));
+          const transactions = [];
+          let lastBalance = 0;
+          rows.slice(1).forEach(row => {
+            if (!row || row.every(c => !c)) return;
+            const debit = parseFloat(String(row[debitIdx] || "0").replace(/[$,]/g,"")) || 0;
+            const credit = parseFloat(String(row[creditIdx] || "0").replace(/[$,]/g,"")) || 0;
+            const bal = parseFloat(String(row[balIdx] || "0").replace(/[$,]/g,"")) || 0;
+            const desc = String(row[descIdx] || "").trim();
+            const dateRaw = row[dateIdx];
+            let dateVal = new Date().toISOString();
+            if (dateRaw) {
+              const d = new Date(dateRaw);
+              if (!isNaN(d)) dateVal = d.toISOString();
+            }
+            if (bal) lastBalance = bal;
+            if (debit > 0 || credit > 0) {
+              transactions.push({
+                type: debit > 0 ? "withdraw" : "deposit",
+                amount: debit > 0 ? debit : credit,
+                note: desc || (debit > 0 ? "withdraw" : "deposit"),
+                date: dateVal,
+              });
+            }
+          });
+          preview.push({ name: sheetName, balance: lastBalance, txCount: transactions.length, transactions });
+        });
+        setImportPreview(preview);
+        showSnack(`Found ${preview.length} students in file!`, "success");
+      } catch(err) {
+        showSnack("Could not read file. Make sure it's an .xlsx file.", "error");
+        console.error(err);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const confirmImport = async () => {
+    if (!importPreview) return;
+    const newDB = { ...db, students: [...db.students], transactions: [...db.transactions] };
+    let added = 0, updated = 0;
+    importPreview.forEach(imp => {
+      const existingIdx = newDB.students.findIndex(s => s.name.toLowerCase() === imp.name.toLowerCase());
+      let studentId;
+      if (existingIdx >= 0) {
+        // Update existing student balance
+        newDB.students[existingIdx] = { ...newDB.students[existingIdx], balance: imp.balance };
+        studentId = newDB.students[existingIdx].id;
+        updated++;
+      } else {
+        // Create new student
+        studentId = "IMP" + Date.now().toString().slice(-6) + added;
+        newDB.students.push({
+          id: studentId,
+          name: imp.name,
+          pin: "1234",
+          balance: imp.balance,
+          archived: false,
+          emoji: EMOJIS[newDB.students.length % EMOJIS.length]
+        });
+        added++;
+      }
+      // Add transactions (skip if already imported — check by note+date)
+      const existingTxKeys = new Set(newDB.transactions.filter(t => t.studentId === studentId).map(t => t.note + t.date.slice(0,10)));
+      imp.transactions.forEach(t => {
+        const key = t.note + t.date.slice(0,10);
+        if (!existingTxKeys.has(key)) {
+          newDB.transactions.push({ id: Date.now().toString() + Math.random(), type: t.type, studentId, amount: t.amount, note: t.note, date: t.date });
+        }
+      });
+    });
+    await persist(newDB);
+    setImportOpen(false);
+    setImportPreview(null);
+    setImportFile(null);
+    showSnack(`✅ Imported! ${added} new students, ${updated} updated.`, "success");
+  };
+
   // ── Reports
   const filteredTx = db.transactions.slice().reverse().filter(t => {
     if (fSid && t.studentId !== fSid && t.toStudentId !== fSid) return false;
@@ -1023,6 +1127,36 @@ function TeacherDashboard({ db, setDb, onLogout }) {
         {/* ── MANAGE ── */}
         {tab === "manage" && (
           <>
+            {/* ── IMPORT FROM EXCEL ── */}
+            <Card style={{ border: "2px solid #3498db", marginBottom: 18 }}>
+              <div style={{ fontFamily:"'Baloo 2',cursive",fontSize:18,fontWeight:700,marginBottom:4,color:"#1a5276" }}>📥 Import from Google Sheets</div>
+              <div style={{ fontSize:13,color:"#8a94a6",marginBottom:16 }}>Export your Google Sheet as an <strong>.xlsx</strong> file (File → Download → Excel) and upload it here. Each student tab will be imported automatically.</div>
+              <label style={{ display:"inline-block",padding:"10px 20px",background:"#3498db",color:"#fff",borderRadius:12,fontFamily:"inherit",fontSize:14,fontWeight:800,cursor:"pointer",marginBottom:16 }}>
+                📂 Choose .xlsx File
+                <input type="file" accept=".xlsx,.xls" style={{ display:"none" }} onChange={handleImportFile} />
+              </label>
+              {importPreview && (
+                <>
+                  <div style={{ fontWeight:800,fontSize:14,marginBottom:10,color:"#1e2a3a" }}>Preview — {importPreview.length} students found:</div>
+                  <div style={{ maxHeight:220,overflowY:"auto",marginBottom:16,border:"1px solid #e4e9f0",borderRadius:12 }}>
+                    {importPreview.map((s,i) => (
+                      <div key={i} style={{ display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",borderBottom:"1px solid #f0f4f8" }}>
+                        <div>
+                          <div style={{ fontWeight:700,fontSize:14 }}>{s.name}</div>
+                          <div style={{ fontSize:12,color:"#8a94a6" }}>{s.txCount} transactions · PIN will be 1234</div>
+                        </div>
+                        <div style={{ fontFamily:"'Baloo 2',cursive",fontSize:18,fontWeight:800,color:"#27ae60" }}>${s.balance.toFixed(2)}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display:"flex",gap:10 }}>
+                    <Btn onClick={()=>{setImportPreview(null);setImportFile(null);}} color="#f0f4f8" textColor="#1e2a3a" style={{flex:1}}>Cancel</Btn>
+                    <Btn onClick={confirmImport} color="#3498db" style={{flex:1}}>✅ Confirm Import</Btn>
+                  </div>
+                </>
+              )}
+            </Card>
+
             <Card>
               <div style={{ fontFamily:"'Baloo 2',cursive",fontSize:18,fontWeight:700,marginBottom:14 }}>➕ Add New Student</div>
               <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:14 }}>
