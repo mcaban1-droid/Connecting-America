@@ -518,6 +518,23 @@ function TeacherDashboard({ db, setDb, onLogout }) {
   const [txType, setTxType] = useState("deposit"); const [txSid, setTxSid] = useState(""); const [txToSid, setTxToSid] = useState(""); const [txAmt, setTxAmt] = useState(""); const [txNote, setTxNote] = useState("");
   // Weekly
   const [wkAmt, setWkAmt] = useState(""); const [wkNote, setWkNote] = useState("Weekly Allowance");
+  // Payday Schedule
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [scheduleEnabled, setScheduleEnabled] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("paydaySchedule") || "{}").enabled || false; } catch { return false; }
+  });
+  const [scheduleDay, setScheduleDay] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("paydaySchedule") || "{}").day ?? 5; } catch { return 5; }
+  });
+  const [scheduleAmt, setScheduleAmt] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("paydaySchedule") || "{}").amount || ""; } catch { return ""; }
+  });
+  const [scheduleNote, setScheduleNote] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("paydaySchedule") || "{}").note || "Weekly Allowance"; } catch { return "Weekly Allowance"; }
+  });
+  const [scheduleFreq, setScheduleFreq] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("paydaySchedule") || "{}").freq || "weekly"; } catch { return "weekly"; }
+  });
   // Fees
   const [feeAmt, setFeeAmt] = useState(""); const [feeNote, setFeeNote] = useState(""); const [feeType, setFeeType] = useState("Rent"); const [feeStudents, setFeeStudents] = useState("all"); const [feeSelected, setFeeSelected] = useState([]);
   // Add student
@@ -539,6 +556,9 @@ function TeacherDashboard({ db, setDb, onLogout }) {
   const thisWeek = db.transactions.filter(t => (Date.now() - new Date(t.date)) < 7 * 86400000).length;
 
   const persist = async (updated) => { setDb({ ...updated }); await saveDB(updated); };
+
+  // Check payday schedule when teacher portal loads
+  useEffect(() => { if (db) checkAndRunSchedule(db); }, []);
 
   // ── Submit Transaction
   const submitTx = async () => {
@@ -572,6 +592,44 @@ function TeacherDashboard({ db, setDb, onLogout }) {
       newDB.transactions.push({ id: Date.now().toString() + s.id, type: "deposit", studentId: s.id, amount: amt, note: wkNote || "Weekly Allowance", date: nowISO() });
     });
     await persist(newDB); showSnack(`💵 Paid ${fmt(amt)} to ${active.length} students!`, "success");
+  };
+
+  // ── Payday Schedule
+  const saveSchedule = () => {
+    if (!scheduleAmt || parseFloat(scheduleAmt) <= 0) { showSnack("Enter a valid amount.", "error"); return; }
+    const schedule = { enabled: scheduleEnabled, day: scheduleDay, amount: scheduleAmt, note: scheduleNote, freq: scheduleFreq, lastRun: JSON.parse(localStorage.getItem("paydaySchedule") || "{}").lastRun || null };
+    localStorage.setItem("paydaySchedule", JSON.stringify(schedule));
+    showSnack(scheduleEnabled ? "✅ Payday schedule saved!" : "Schedule disabled.", "success");
+    setScheduleOpen(false);
+  };
+
+  const checkAndRunSchedule = async (currentDb) => {
+    try {
+      const schedule = JSON.parse(localStorage.getItem("paydaySchedule") || "{}");
+      if (!schedule.enabled || !schedule.amount) return;
+      const now = new Date();
+      const todayDay = now.getDay(); // 0=Sun, 1=Mon ... 5=Fri, 6=Sat
+      const todayStr = now.toISOString().slice(0, 10);
+      if (schedule.lastRun === todayStr) return; // already ran today
+      let shouldRun = false;
+      if (schedule.freq === "weekly" && todayDay === parseInt(schedule.day)) shouldRun = true;
+      if (schedule.freq === "biweekly" && todayDay === parseInt(schedule.day)) {
+        // Check if it's been at least 13 days since last run
+        if (!schedule.lastRun || (now - new Date(schedule.lastRun)) >= 13 * 86400000) shouldRun = true;
+      }
+      if (!shouldRun) return;
+      const amt = parseFloat(schedule.amount);
+      const newDB = { ...currentDb, students: currentDb.students.map(s => ({ ...s })), transactions: [...currentDb.transactions] };
+      newDB.students.filter(s => !s.archived).forEach(s => {
+        s.balance = Math.round((s.balance + amt) * 100) / 100;
+        newDB.transactions.push({ id: Date.now().toString() + s.id, type: "deposit", studentId: s.id, amount: amt, note: schedule.note || "Weekly Allowance", date: nowISO() });
+      });
+      schedule.lastRun = todayStr;
+      localStorage.setItem("paydaySchedule", JSON.stringify(schedule));
+      await saveDB(newDB);
+      setDb({ ...newDB });
+      showSnack(`🎉 Payday! ${fmt(amt)} paid to ${newDB.students.filter(s=>!s.archived).length} students!`, "success");
+    } catch(e) { console.error("Schedule check failed", e); }
   };
 
   // ── Charge Fee
@@ -940,7 +998,12 @@ function TeacherDashboard({ db, setDb, onLogout }) {
               <Btn onClick={submitTx}>✓ Submit Transaction</Btn>
             </Card>
             <Card>
-              <div style={{ fontFamily: "'Baloo 2', cursive", fontSize: 18, fontWeight: 700, marginBottom: 8 }}>📅 Weekly Pay Day</div>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
+                <div style={{ fontFamily: "'Baloo 2', cursive", fontSize: 18, fontWeight: 700 }}>📅 Weekly Pay Day</div>
+                <button onClick={()=>setScheduleOpen(true)} style={{ padding:"7px 14px", background: scheduleEnabled ? "#d5f5e3" : "#f0f4f8", color: scheduleEnabled ? "#27ae60" : "#8a94a6", border: scheduleEnabled ? "2px solid #27ae60" : "2px solid #e4e9f0", borderRadius:10, fontFamily:"inherit", fontSize:12, fontWeight:800, cursor:"pointer" }}>
+                  {scheduleEnabled ? "⏰ Schedule ON" : "⏰ Set Schedule"}
+                </button>
+              </div>
               <div style={{ fontSize: 13, color: "#8a94a6", marginBottom: 16 }}>Deposit the same amount to ALL active students at once.</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
                 <Input label="Amount per Student ($)" type="number" min="0.01" step="0.01" placeholder="e.g. 10.00" value={wkAmt} onChange={e=>setWkAmt(e.target.value)} />
@@ -1481,6 +1544,41 @@ function TeacherDashboard({ db, setDb, onLogout }) {
           </div>
         </Modal>
       )}
+
+      {/* Payday Schedule Modal */}
+      <Modal open={scheduleOpen} onClose={()=>setScheduleOpen(false)} title="⏰ Payday Schedule" subtitle="Set up automatic weekly paydays so you never forget!" wide>
+        <label style={{ display:"flex", alignItems:"center", gap:10, fontWeight:700, fontSize:15, marginBottom:20, cursor:"pointer", padding:"14px 16px", background: scheduleEnabled ? "#d5f5e3" : "#f0f4f8", borderRadius:12 }}>
+          <input type="checkbox" checked={scheduleEnabled} onChange={e=>setScheduleEnabled(e.target.checked)} style={{ width:18, height:18 }} />
+          <span style={{ color: scheduleEnabled ? "#27ae60" : "#8a94a6" }}>{scheduleEnabled ? "✅ Schedule is ON" : "Schedule is OFF — click to enable"}</span>
+        </label>
+        <div style={{ marginBottom:16 }}>
+          <div style={{ fontSize:11, fontWeight:800, textTransform:"uppercase", letterSpacing:"0.07em", color:"#8a94a6", marginBottom:8 }}>Payday Frequency</div>
+          <div style={{ display:"flex", gap:8 }}>
+            {[{val:"weekly",label:"📅 Every Week"},{val:"biweekly",label:"📅 Every 2 Weeks"}].map(f=>(
+              <button key={f.val} onClick={()=>setScheduleFreq(f.val)} style={{ flex:1, padding:"10px", background: scheduleFreq===f.val?"#1e2a3a":"#f0f4f8", color: scheduleFreq===f.val?"#fff":"#8a94a6", border:"none", borderRadius:10, fontFamily:"inherit", fontSize:13, fontWeight:700, cursor:"pointer" }}>{f.label}</button>
+            ))}
+          </div>
+        </div>
+        <div style={{ marginBottom:16 }}>
+          <div style={{ fontSize:11, fontWeight:800, textTransform:"uppercase", letterSpacing:"0.07em", color:"#8a94a6", marginBottom:8 }}>Payday Day</div>
+          <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+            {[{val:1,label:"Mon"},{val:2,label:"Tue"},{val:3,label:"Wed"},{val:4,label:"Thu"},{val:5,label:"Fri"}].map(d=>(
+              <button key={d.val} onClick={()=>setScheduleDay(d.val)} style={{ flex:1, padding:"10px 6px", background: scheduleDay===d.val?"#f39c12":"#f0f4f8", color: scheduleDay===d.val?"#fff":"#8a94a6", border:"none", borderRadius:10, fontFamily:"inherit", fontSize:13, fontWeight:700, cursor:"pointer" }}>{d.label}</button>
+            ))}
+          </div>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+          <Input label="Amount per Student ($)" type="number" min="0.01" step="0.01" placeholder="e.g. 10.00" value={scheduleAmt} onChange={e=>setScheduleAmt(e.target.value)} />
+          <Input label="Note" placeholder="Weekly Allowance" value={scheduleNote} onChange={e=>setScheduleNote(e.target.value)} />
+        </div>
+        <div style={{ background:"#fef9e7", border:"1px solid #f9e79f", borderRadius:10, padding:"10px 14px", fontSize:13, color:"#9a7d0a", fontWeight:600, marginBottom:16 }}>
+          ⚠️ Payday runs automatically when you open the Teacher Portal on the scheduled day. Make sure to open the app on payday!
+        </div>
+        <div style={{ display:"flex", gap:10 }}>
+          <Btn onClick={()=>setScheduleOpen(false)} color="#f0f4f8" textColor="#1e2a3a" style={{flex:1}}>Cancel</Btn>
+          <Btn onClick={saveSchedule} color="#f39c12" style={{flex:1}}>💾 Save Schedule</Btn>
+        </div>
+      </Modal>
     </div>
   );
 }
