@@ -509,6 +509,10 @@ function TeacherDashboard({ db, setDb, onLogout }) {
   const [tab, setTab] = useState("students");
   const [showArchived, setShowArchived] = useState(false);
   const [reportView, setReportView] = useState("transactions");
+  // Sort state
+  const [txSort, setTxSort] = useState("date_desc");
+  const [cardSort, setCardSort] = useState("name_asc");
+  const [storeSort, setStoreSort] = useState("name_asc");
 
   // Transaction form
   const [txType, setTxType] = useState("deposit"); const [txSid, setTxSid] = useState(""); const [txToSid, setTxToSid] = useState(""); const [txAmt, setTxAmt] = useState(""); const [txNote, setTxNote] = useState("");
@@ -792,12 +796,21 @@ function TeacherDashboard({ db, setDb, onLogout }) {
   };
 
   // ── Reports
-  const filteredTx = db.transactions.slice().reverse().filter(t => {
+  const filteredTx = db.transactions.slice().filter(t => {
     if (fSid && t.studentId !== fSid && t.toStudentId !== fSid) return false;
     if (fType && t.type !== fType) return false;
     if (fFrom && t.date < fFrom) return false;
     if (fTo && t.date.slice(0, 10) > fTo) return false;
     return true;
+  }).sort((a, b) => {
+    if (txSort === "date_desc") return new Date(b.date) - new Date(a.date);
+    if (txSort === "date_asc") return new Date(a.date) - new Date(b.date);
+    if (txSort === "name_asc") { const na = db.students.find(s=>s.id===a.studentId)?.name||""; const nb = db.students.find(s=>s.id===b.studentId)?.name||""; return na.localeCompare(nb); }
+    if (txSort === "name_desc") { const na = db.students.find(s=>s.id===a.studentId)?.name||""; const nb = db.students.find(s=>s.id===b.studentId)?.name||""; return nb.localeCompare(na); }
+    if (txSort === "amount_desc") return b.amount - a.amount;
+    if (txSort === "amount_asc") return a.amount - b.amount;
+    if (txSort === "type_asc") return a.type.localeCompare(b.type);
+    return 0;
   });
 
   const exportCSV = () => {
@@ -1092,6 +1105,22 @@ function TeacherDashboard({ db, setDb, onLogout }) {
                   <input type="date" value={fFrom} onChange={e=>setFFrom(e.target.value)} style={{ padding: "9px 12px", border: "2px solid #e4e9f0", borderRadius: 10, fontFamily: "inherit", fontSize: 13, fontWeight: 600 }} />
                   <input type="date" value={fTo} onChange={e=>setFTo(e.target.value)} style={{ padding: "9px 12px", border: "2px solid #e4e9f0", borderRadius: 10, fontFamily: "inherit", fontSize: 13, fontWeight: 600 }} />
                 </div>
+                {/* Sort bar */}
+                <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:14, alignItems:"center" }}>
+                  <span style={{ fontSize:11, fontWeight:800, color:"#8a94a6", textTransform:"uppercase", letterSpacing:"0.07em" }}>Sort:</span>
+                  {[
+                    {val:"date_desc", label:"📅 Newest"},
+                    {val:"date_asc", label:"📅 Oldest"},
+                    {val:"name_asc", label:"🔤 A→Z"},
+                    {val:"name_desc", label:"🔤 Z→A"},
+                    {val:"amount_desc", label:"💰 Highest"},
+                    {val:"amount_asc", label:"💰 Lowest"},
+                    {val:"type_asc", label:"🏷️ Type"},
+                  ].map(s => (
+                    <button key={s.val} onClick={()=>setTxSort(s.val)} style={{ padding:"6px 12px", background: txSort===s.val?"#1e2a3a":"#f0f4f8", color: txSort===s.val?"#fff":"#8a94a6", border:"none", borderRadius:8, fontFamily:"inherit", fontSize:12, fontWeight:700, cursor:"pointer" }}>{s.label}</button>
+                  ))}
+                </div>
+
                 {filteredTx.length > 0 && (() => {
                   const totalIn = filteredTx.filter(t=>t.type==="deposit"||t.type==="bonus").reduce((a,t)=>a+t.amount,0);
                   const totalOut = filteredTx.filter(t=>t.type==="withdraw"||t.type==="penalty"||t.type==="purchase").reduce((a,t)=>a+t.amount,0);
@@ -1146,8 +1175,33 @@ function TeacherDashboard({ db, setDb, onLogout }) {
                     w.document.close();
                   }} color="#3498db" style={{ padding: "9px 16px", fontSize: 13 }}>🖨️ Print All</Btn>
                 </div>
+                {/* Sort bar */}
+                <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:14, alignItems:"center" }}>
+                  <span style={{ fontSize:11, fontWeight:800, color:"#8a94a6", textTransform:"uppercase", letterSpacing:"0.07em" }}>Sort:</span>
+                  {[
+                    {val:"name_asc", label:"🔤 A→Z"},
+                    {val:"name_desc", label:"🔤 Z→A"},
+                    {val:"balance_desc", label:"💰 Balance ↓"},
+                    {val:"balance_asc", label:"💰 Balance ↑"},
+                    {val:"earned_desc", label:"💚 Earned ↓"},
+                    {val:"spent_desc", label:"🔴 Spent ↓"},
+                    {val:"tx_desc", label:"📋 Most Tx"},
+                  ].map(s => (
+                    <button key={s.val} onClick={()=>setCardSort(s.val)} style={{ padding:"6px 12px", background: cardSort===s.val?"#1e2a3a":"#f0f4f8", color: cardSort===s.val?"#fff":"#8a94a6", border:"none", borderRadius:8, fontFamily:"inherit", fontSize:12, fontWeight:700, cursor:"pointer" }}>{s.label}</button>
+                  ))}
+                </div>
+
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px,1fr))", gap: 16 }}>
-                  {studentSummaries.map(s => {
+                  {[...studentSummaries].sort((a,b) => {
+                    if (cardSort==="name_asc") return a.name.localeCompare(b.name);
+                    if (cardSort==="name_desc") return b.name.localeCompare(a.name);
+                    if (cardSort==="balance_desc") return b.balance - a.balance;
+                    if (cardSort==="balance_asc") return a.balance - b.balance;
+                    if (cardSort==="earned_desc") return b.totalIn - a.totalIn;
+                    if (cardSort==="spent_desc") return b.totalOut - a.totalOut;
+                    if (cardSort==="tx_desc") return b.txCount - a.txCount;
+                    return 0;
+                  }).map(s => {
                     const sTx = db.transactions.filter(t=>t.studentId===s.id||t.toStudentId===s.id).slice().reverse().slice(0,5);
                     return (
                       <Card key={s.id} style={{ marginBottom: 0 }}>
@@ -1194,13 +1248,41 @@ function TeacherDashboard({ db, setDb, onLogout }) {
             {reportView==="store" && (
               <Card>
                 <div style={{ fontFamily:"'Baloo 2',cursive",fontSize:18,fontWeight:700,marginBottom:16 }}>🏪 Store Sales Report</div>
+                {/* Sort bar */}
+                <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:14, alignItems:"center" }}>
+                  <span style={{ fontSize:11, fontWeight:800, color:"#8a94a6", textTransform:"uppercase", letterSpacing:"0.07em" }}>Sort:</span>
+                  {[
+                    {val:"name_asc", label:"🔤 A→Z"},
+                    {val:"name_desc", label:"🔤 Z→A"},
+                    {val:"price_desc", label:"💰 Price ↓"},
+                    {val:"price_asc", label:"💰 Price ↑"},
+                    {val:"revenue_desc", label:"💸 Revenue ↓"},
+                    {val:"orders_desc", label:"🛒 Orders ↓"},
+                    {val:"stock_asc", label:"📦 Stock ↑"},
+                  ].map(s => (
+                    <button key={s.val} onClick={()=>setStoreSort(s.val)} style={{ padding:"6px 12px", background: storeSort===s.val?"#1e2a3a":"#f0f4f8", color: storeSort===s.val?"#fff":"#8a94a6", border:"none", borderRadius:8, fontFamily:"inherit", fontSize:12, fontWeight:700, cursor:"pointer" }}>{s.label}</button>
+                  ))}
+                </div>
                 <div style={{ overflowX:"auto" }}>
                   <table style={{ width:"100%",borderCollapse:"collapse",fontSize:13 }}>
                     <thead><tr>{["Item","Category","Price","Stock Left","Orders","Revenue"].map(h=><th key={h} style={{ textAlign:"left",padding:"10px 12px",fontSize:11,textTransform:"uppercase",letterSpacing:"0.06em",color:"#8a94a6",borderBottom:"2px solid #f0f4f8",fontWeight:800 }}>{h}</th>)}</tr></thead>
                     <tbody>
                       {(db.storeItems||[]).length===0
                         ? <tr><td colSpan={6} style={{ textAlign:"center",padding:28,color:"#8a94a6" }}>No store items yet.</td></tr>
-                        : (db.storeItems||[]).map(item=>{
+                        : [...(db.storeItems||[])].sort((a,b) => {
+                            const aOrders=db.transactions.filter(t=>t.type==="purchase"&&t.itemId===a.id).length;
+                            const bOrders=db.transactions.filter(t=>t.type==="purchase"&&t.itemId===b.id).length;
+                            const aRev=db.transactions.filter(t=>t.type==="purchase"&&t.itemId===a.id).reduce((s,t)=>s+t.amount,0);
+                            const bRev=db.transactions.filter(t=>t.type==="purchase"&&t.itemId===b.id).reduce((s,t)=>s+t.amount,0);
+                            if (storeSort==="name_asc") return a.name.localeCompare(b.name);
+                            if (storeSort==="name_desc") return b.name.localeCompare(a.name);
+                            if (storeSort==="price_desc") return b.price - a.price;
+                            if (storeSort==="price_asc") return a.price - b.price;
+                            if (storeSort==="revenue_desc") return bRev - aRev;
+                            if (storeSort==="orders_desc") return bOrders - aOrders;
+                            if (storeSort==="stock_asc") return (a.stock===999?99999:a.stock) - (b.stock===999?99999:b.stock);
+                            return 0;
+                          }).map(item=>{
                             const orders=db.transactions.filter(t=>t.type==="purchase"&&t.itemId===item.id).length;
                             const revenue=db.transactions.filter(t=>t.type==="purchase"&&t.itemId===item.id).reduce((a,t)=>a+t.amount,0);
                             return(
