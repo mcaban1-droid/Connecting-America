@@ -675,9 +675,23 @@ function TeacherDashboard({ db, setDb, onLogout }) {
             const desc = String(row[descIdx] || "").trim();
             const dateRaw = row[dateIdx];
             let dateVal = new Date().toISOString();
-            if (dateRaw) {
-              const d = new Date(dateRaw);
-              if (!isNaN(d)) dateVal = d.toISOString();
+            if (dateRaw !== undefined && dateRaw !== null && dateRaw !== "") {
+              // Excel stores dates as serial numbers (days since Jan 1 1900)
+              if (typeof dateRaw === "number") {
+                // Excel serial date conversion (account for Excel's leap year bug)
+                const excelEpoch = new Date(1899, 11, 30);
+                const d = new Date(excelEpoch.getTime() + dateRaw * 86400000);
+                if (!isNaN(d)) dateVal = d.toISOString();
+              } else {
+                // Try parsing as string date
+                const str = String(dateRaw).trim();
+                const d = new Date(str);
+                if (!isNaN(d)) {
+                  // Fix timezone offset so MM/DD/YYYY doesn't shift by a day
+                  const offset = d.getTimezoneOffset() * 60000;
+                  dateVal = new Date(d.getTime() + offset).toISOString();
+                }
+              }
             }
             if (bal) lastBalance = bal;
             if (debit > 0 || credit > 0) {
