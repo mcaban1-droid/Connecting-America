@@ -8,6 +8,21 @@
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyDpCcDphpcVWYTwdhgKatW4nJSeEageY6E",
+      authDomain: "connecting-america-ccbf5.firebaseapp.com",
+      databaseURL: "https://connecting-america-ccbf5-default-rtdb.firebaseio.com",
+      projectId: "connecting-america-ccbf5",
+      storageBucket: "connecting-america-ccbf5.firebasestorage.app",
+      messagingSenderId: "939554744843",
+      appId: "1:939554744843:web:f5d7710e026eb79f57750e"
+    };
+    firebase.initializeApp(firebaseConfig);
+    window.firebaseDB = firebase.database();
+  </script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Nunito', sans-serif; }
@@ -48,20 +63,26 @@ const DEFAULT_DATA = {
   storeItems: DEFAULT_STORE_ITEMS,
 };
 
-// ─── STORAGE (localStorage for standalone deploy) ────────────
+// ─── STORAGE (Firebase Realtime Database) ────────────────────
 async function loadDB() {
   try {
-    const raw = localStorage.getItem("classCashDB_v2");
-    if (raw) {
-      const parsed = JSON.parse(raw);
+    const snapshot = await window.firebaseDB.ref("classCashDB").once("value");
+    if (snapshot.exists()) {
+      const parsed = snapshot.val();
       if (!parsed.storeItems) parsed.storeItems = DEFAULT_STORE_ITEMS;
       return parsed;
     }
-  } catch {}
+  } catch(e) { console.error("Firebase load failed:", e); }
   return JSON.parse(JSON.stringify(DEFAULT_DATA));
 }
 async function saveDB(data) {
-  try { localStorage.setItem("classCashDB_v2", JSON.stringify(data)); } catch(e) { console.error("Save failed", e); }
+  try {
+    await window.firebaseDB.ref("classCashDB").set(data);
+  } catch(e) {
+    console.error("Firebase save failed:", e);
+    // Fallback to localStorage if Firebase fails
+    try { localStorage.setItem("classCashDB_v2", JSON.stringify(data)); } catch {}
+  }
 }
 
 // ─── UI PRIMITIVES ───────────────────────────────────────────
@@ -561,6 +582,7 @@ function TeacherDashboard({ db, setDb, onLogout }) {
       { id: "p2", name: "2nd Period", color: "#e74c3c", tallies: [], prize: "Class Party" }
     ]; }
   });
+  const [tallyLoaded, setTallyLoaded] = useState(false);
   const [tallyEditOpen, setTallyEditOpen] = useState(false);
   const [tallyEditClass, setTallyEditClass] = useState(null);
   const [tallyEditName, setTallyEditName] = useState("");
@@ -624,7 +646,7 @@ function TeacherDashboard({ db, setDb, onLogout }) {
     const today = new Date().toISOString().slice(0, 10);
     const updated = tallyClasses.map(c => c.id === classId ? { ...c, tallies: [...c.tallies, { date: today, count: 1 }] } : c);
     setTallyClasses(updated);
-    localStorage.setItem("tallyClasses", JSON.stringify(updated));
+    localStorage.setItem("tallyClasses", JSON.stringify(updated)); window.firebaseDB.ref("tallyClasses").set(updated).catch(e=>console.error(e));
   };
   const removeTally = (classId) => {
     const updated = tallyClasses.map(c => {
@@ -632,18 +654,18 @@ function TeacherDashboard({ db, setDb, onLogout }) {
       return { ...c, tallies: c.tallies.slice(0, -1) };
     });
     setTallyClasses(updated);
-    localStorage.setItem("tallyClasses", JSON.stringify(updated));
+    localStorage.setItem("tallyClasses", JSON.stringify(updated)); window.firebaseDB.ref("tallyClasses").set(updated).catch(e=>console.error(e));
   };
   const resetTallies = (classId) => {
     const updated = tallyClasses.map(c => c.id === classId ? { ...c, tallies: [] } : c);
     setTallyClasses(updated);
-    localStorage.setItem("tallyClasses", JSON.stringify(updated));
+    localStorage.setItem("tallyClasses", JSON.stringify(updated)); window.firebaseDB.ref("tallyClasses").set(updated).catch(e=>console.error(e));
   };
   const saveTallyEdit = () => {
     if (!tallyEditName) { showSnack("Enter a class name.", "error"); return; }
     const updated = tallyClasses.map(c => c.id === tallyEditClass ? { ...c, name: tallyEditName, prize: tallyEditPrize, color: tallyEditColor } : c);
     setTallyClasses(updated);
-    localStorage.setItem("tallyClasses", JSON.stringify(updated));
+    localStorage.setItem("tallyClasses", JSON.stringify(updated)); window.firebaseDB.ref("tallyClasses").set(updated).catch(e=>console.error(e));
     setTallyEditOpen(false);
     showSnack("Class updated!", "success");
   };
@@ -651,7 +673,7 @@ function TeacherDashboard({ db, setDb, onLogout }) {
     const newClass = { id: "p" + Date.now(), name: `Period ${tallyClasses.length + 1}`, color: ["#3498db","#e74c3c","#2ecc71","#9b59b6","#f39c12","#1abc9c"][tallyClasses.length % 6], tallies: [], prize: "Class Party" };
     const updated = [...tallyClasses, newClass];
     setTallyClasses(updated);
-    localStorage.setItem("tallyClasses", JSON.stringify(updated));
+    localStorage.setItem("tallyClasses", JSON.stringify(updated)); window.firebaseDB.ref("tallyClasses").set(updated).catch(e=>console.error(e));
     showSnack(`${newClass.name} added!`, "success");
   };
   const addPastTally = () => {
@@ -668,7 +690,7 @@ function TeacherDashboard({ db, setDb, onLogout }) {
       return { ...c, tallies: [...filtered, { date: tallyPastDate, count: existing + count }] };
     });
     setTallyClasses(updated);
-    localStorage.setItem("tallyClasses", JSON.stringify(updated));
+    localStorage.setItem("tallyClasses", JSON.stringify(updated)); window.firebaseDB.ref("tallyClasses").set(updated).catch(e=>console.error(e));
     showSnack(`Added ${count} talli${count!==1?"es":"s"} for ${tallyPastDate}!`, "success");
     setTallyPastCount("1");
   };
@@ -683,13 +705,13 @@ function TeacherDashboard({ db, setDb, onLogout }) {
       return { ...c, tallies: c.tallies.map(t => t.date === date ? { ...t, count: t.count - 1 } : t) };
     });
     setTallyClasses(updated);
-    localStorage.setItem("tallyClasses", JSON.stringify(updated));
+    localStorage.setItem("tallyClasses", JSON.stringify(updated)); window.firebaseDB.ref("tallyClasses").set(updated).catch(e=>console.error(e));
   };
 
   const clearPastDate = (classId, date) => {
     const updated = tallyClasses.map(c => c.id === classId ? { ...c, tallies: c.tallies.filter(t => t.date !== date) } : c);
     setTallyClasses(updated);
-    localStorage.setItem("tallyClasses", JSON.stringify(updated));
+    localStorage.setItem("tallyClasses", JSON.stringify(updated)); window.firebaseDB.ref("tallyClasses").set(updated).catch(e=>console.error(e));
     showSnack("Day cleared.", "success");
   };
 
@@ -699,7 +721,7 @@ function TeacherDashboard({ db, setDb, onLogout }) {
     setConfirm({ title: `Remove ${cls.name}?`, msg: "This will delete the class and all its tally data.", cb: async () => {
       const updated = tallyClasses.filter(c => c.id !== classId);
       setTallyClasses(updated);
-      localStorage.setItem("tallyClasses", JSON.stringify(updated));
+      localStorage.setItem("tallyClasses", JSON.stringify(updated)); window.firebaseDB.ref("tallyClasses").set(updated).catch(e=>console.error(e));
       showSnack("Class removed.", "success");
     }});
   };
@@ -711,6 +733,31 @@ function TeacherDashboard({ db, setDb, onLogout }) {
 
   // Check payday schedule when teacher portal loads
   useEffect(() => { if (db) checkAndRunSchedule(db); }, []);
+
+  // Load tally data from Firebase on mount
+  useEffect(() => {
+    window.firebaseDB.ref("tallyClasses").once("value").then(snap => {
+      if (snap.exists()) {
+        const data = snap.val();
+        setTallyClasses(Array.isArray(data) ? data : Object.values(data));
+        localStorage.setItem("tallyClasses", JSON.stringify(data));
+      }
+      setTallyLoaded(true);
+    }).catch(e => { console.error("Tally load failed:", e); setTallyLoaded(true); });
+  }, []);
+
+  // Subscribe to real-time DB updates for student data
+  useEffect(() => {
+    const ref = window.firebaseDB.ref("classCashDB");
+    const handler = ref.on("value", snap => {
+      if (snap.exists()) {
+        const data = snap.val();
+        if (!data.storeItems) data.storeItems = DEFAULT_STORE_ITEMS;
+        setDb(data);
+      }
+    });
+    return () => ref.off("value", handler);
+  }, []);
 
   // ── Submit Transaction
   const submitTx = async () => {
@@ -750,7 +797,7 @@ function TeacherDashboard({ db, setDb, onLogout }) {
   const saveSchedule = () => {
     if (!scheduleAmt || parseFloat(scheduleAmt) <= 0) { showSnack("Enter a valid amount.", "error"); return; }
     const schedule = { enabled: scheduleEnabled, day: scheduleDay, amount: scheduleAmt, note: scheduleNote, freq: scheduleFreq, lastRun: JSON.parse(localStorage.getItem("paydaySchedule") || "{}").lastRun || null };
-    localStorage.setItem("paydaySchedule", JSON.stringify(schedule));
+    localStorage.setItem("paydaySchedule", JSON.stringify(schedule)); try { window.firebaseDB.ref("paydaySchedule").set(schedule); } catch(e) {}
     showSnack(scheduleEnabled ? "✅ Payday schedule saved!" : "Schedule disabled.", "success");
     setScheduleOpen(false);
   };
@@ -777,7 +824,7 @@ function TeacherDashboard({ db, setDb, onLogout }) {
         newDB.transactions.push({ id: Date.now().toString() + s.id, type: "deposit", studentId: s.id, amount: amt, note: schedule.note || "Weekly Allowance", date: nowISO() });
       });
       schedule.lastRun = todayStr;
-      localStorage.setItem("paydaySchedule", JSON.stringify(schedule));
+      localStorage.setItem("paydaySchedule", JSON.stringify(schedule)); try { window.firebaseDB.ref("paydaySchedule").set(schedule); } catch(e) {}
       await saveDB(newDB);
       setDb({ ...newDB });
       showSnack(`🎉 Payday! ${fmt(amt)} paid to ${newDB.students.filter(s=>!s.archived).length} students!`, "success");
