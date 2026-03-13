@@ -294,7 +294,7 @@ function StudentDashboard({ db, setDb, studentId, onLogout }) {
     showSnack(`💸 Sent ${fmt(a)} to ${toSt.name}!`, "success");
   };
 
-  const tabs = [{ key: "bank", icon: "🏦", label: "My Bank" }, { key: "store", icon: "🛍️", label: "School Store" }];
+  const tabs = [{ key: "bank", icon: "🏦", label: "My Bank" }, { key: "store", icon: "🛍️", label: "School Store" }, { key: "tally", icon: "🏆", label: "Leaderboard" }];
   const storeItems = (db.storeItems || []).filter(i => catFilter === "All" || i.category === catFilter);
 
   return (
@@ -425,6 +425,49 @@ function StudentDashboard({ db, setDb, studentId, onLogout }) {
         )}
       </div>
 
+        {/* ── TALLY TAB (student view) ── */}
+        {tab === "tally" && (() => {
+          const classes = (() => { try { return JSON.parse(localStorage.getItem("tallyClasses") || "null") || []; } catch { return []; } })();
+          const getTot = c => c.tallies.reduce((s,t)=>s+t.count,0);
+          const sorted = [...classes].sort((a,b) => getTot(a) - getTot(b));
+          const minTot = sorted.length > 0 ? getTot(sorted[0]) : 0;
+          return (
+            <div>
+              <div style={{ background:"linear-gradient(135deg,#f39c12,#e67e22)", borderRadius:22, padding:"24px 28px", color:"#fff", marginBottom:20, boxShadow:"0 8px 32px rgba(243,156,18,0.35)", textAlign:"center" }}>
+                <div style={{ fontSize:36, marginBottom:6 }}>🏆</div>
+                <div style={{ fontFamily:"'Baloo 2',cursive", fontSize:26, fontWeight:800 }}>Class Competition</div>
+                <div style={{ fontSize:13, opacity:0.9, marginTop:4 }}>Fewest disruptions wins the prize!</div>
+              </div>
+              {sorted.map((c, i) => {
+                const total = getTot(c);
+                const isLeading = total === minTot;
+                return (
+                  <div key={c.id} style={{ background:"#fff", borderRadius:18, padding:20, marginBottom:14, boxShadow:"0 4px 16px rgba(0,0,0,0.07)", border:`2px solid ${isLeading?"#f39c12":"#e4e9f0"}` }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+                      <div style={{ fontFamily:"'Baloo 2',cursive", fontSize:36, fontWeight:800, color:"#f39c12", minWidth:40 }}>{i+1}</div>
+                      <div style={{ flex:1 }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
+                          <span style={{ fontFamily:"'Baloo 2',cursive", fontSize:20, fontWeight:800, color:"#1e2a3a" }}>{c.name}</span>
+                          {isLeading && <span style={{ background:"#fef9e7", color:"#f39c12", fontSize:11, fontWeight:800, padding:"2px 8px", borderRadius:20 }}>🥇 LEADING</span>}
+                        </div>
+                        <div style={{ fontSize:12, color:"#8a94a6", marginBottom:8 }}>🎁 {c.prize || "Prize TBD"}</div>
+                        <div style={{ height:8, background:"#f0f4f8", borderRadius:10, overflow:"hidden" }}>
+                          <div style={{ height:"100%", width:`${Math.min(100, total * 5)}%`, background:c.color, borderRadius:10, transition:"width .4s" }} />
+                        </div>
+                      </div>
+                      <div style={{ textAlign:"center" }}>
+                        <div style={{ fontFamily:"'Baloo 2',cursive", fontSize:42, fontWeight:800, color:c.color }}>{total}</div>
+                        <div style={{ fontSize:11, color:"#8a94a6", fontWeight:700 }}>tallies</div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {classes.length === 0 && <div style={{ textAlign:"center", padding:40, color:"#8a94a6" }}><div style={{ fontSize:40, marginBottom:10 }}>🏆</div><div style={{ fontWeight:600 }}>No classes set up yet.</div></div>}
+            </div>
+          );
+        })()}
+
       {/* ── CART MODAL ── */}
       <Modal open={cartOpen} onClose={() => setCartOpen(false)} title="🛒 Your Cart" subtitle="Review your items before checking out." wide>
         {cart.length === 0
@@ -508,6 +551,21 @@ function StudentDashboard({ db, setDb, studentId, onLogout }) {
 function TeacherDashboard({ db, setDb, onLogout }) {
   const [tab, setTab] = useState("students");
   const [showArchived, setShowArchived] = useState(false);
+  // Tally Tracker
+  const [tallyClasses, setTallyClasses] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("tallyClasses") || "null") || [
+      { id: "p1", name: "1st Period", color: "#3498db", tallies: [], prize: "Class Party" },
+      { id: "p2", name: "2nd Period", color: "#e74c3c", tallies: [], prize: "Class Party" }
+    ]; } catch { return [
+      { id: "p1", name: "1st Period", color: "#3498db", tallies: [], prize: "Class Party" },
+      { id: "p2", name: "2nd Period", color: "#e74c3c", tallies: [], prize: "Class Party" }
+    ]; }
+  });
+  const [tallyEditOpen, setTallyEditOpen] = useState(false);
+  const [tallyEditClass, setTallyEditClass] = useState(null);
+  const [tallyEditName, setTallyEditName] = useState("");
+  const [tallyEditPrize, setTallyEditPrize] = useState("");
+  const [tallyEditColor, setTallyEditColor] = useState("#3498db");
   const [reportView, setReportView] = useState("transactions");
   // Sort state
   const [txSort, setTxSort] = useState("date_desc");
@@ -556,6 +614,57 @@ function TeacherDashboard({ db, setDb, onLogout }) {
   const thisWeek = db.transactions.filter(t => (Date.now() - new Date(t.date)) < 7 * 86400000).length;
 
   const persist = async (updated) => { setDb({ ...updated }); await saveDB(updated); };
+
+  // ── Tally functions
+  const addTally = (classId) => {
+    const today = new Date().toISOString().slice(0, 10);
+    const updated = tallyClasses.map(c => c.id === classId ? { ...c, tallies: [...c.tallies, { date: today, count: 1 }] } : c);
+    setTallyClasses(updated);
+    localStorage.setItem("tallyClasses", JSON.stringify(updated));
+  };
+  const removeTally = (classId) => {
+    const updated = tallyClasses.map(c => {
+      if (c.id !== classId || c.tallies.length === 0) return c;
+      return { ...c, tallies: c.tallies.slice(0, -1) };
+    });
+    setTallyClasses(updated);
+    localStorage.setItem("tallyClasses", JSON.stringify(updated));
+  };
+  const resetTallies = (classId) => {
+    const updated = tallyClasses.map(c => c.id === classId ? { ...c, tallies: [] } : c);
+    setTallyClasses(updated);
+    localStorage.setItem("tallyClasses", JSON.stringify(updated));
+  };
+  const saveTallyEdit = () => {
+    if (!tallyEditName) { showSnack("Enter a class name.", "error"); return; }
+    const updated = tallyClasses.map(c => c.id === tallyEditClass ? { ...c, name: tallyEditName, prize: tallyEditPrize, color: tallyEditColor } : c);
+    setTallyClasses(updated);
+    localStorage.setItem("tallyClasses", JSON.stringify(updated));
+    setTallyEditOpen(false);
+    showSnack("Class updated!", "success");
+  };
+  const addTallyClass = () => {
+    const newClass = { id: "p" + Date.now(), name: `Period ${tallyClasses.length + 1}`, color: ["#3498db","#e74c3c","#2ecc71","#9b59b6","#f39c12","#1abc9c"][tallyClasses.length % 6], tallies: [], prize: "Class Party" };
+    const updated = [...tallyClasses, newClass];
+    setTallyClasses(updated);
+    localStorage.setItem("tallyClasses", JSON.stringify(updated));
+    showSnack(`${newClass.name} added!`, "success");
+  };
+  const deleteTallyClass = (classId) => {
+    if (tallyClasses.length <= 1) { showSnack("You need at least one class.", "error"); return; }
+    const cls = tallyClasses.find(c => c.id === classId);
+    setConfirm({ title: `Remove ${cls.name}?`, msg: "This will delete the class and all its tally data.", cb: async () => {
+      const updated = tallyClasses.filter(c => c.id !== classId);
+      setTallyClasses(updated);
+      localStorage.setItem("tallyClasses", JSON.stringify(updated));
+      showSnack("Class removed.", "success");
+    }});
+  };
+  const getTotalTallies = (c) => c.tallies.reduce((s, t) => s + t.count, 0);
+  const getWeekTallies = (c) => {
+    const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+    return c.tallies.filter(t => t.date >= weekAgo).reduce((s, t) => s + t.count, 0);
+  };
 
   // Check payday schedule when teacher portal loads
   useEffect(() => { if (db) checkAndRunSchedule(db); }, []);
@@ -919,6 +1028,7 @@ function TeacherDashboard({ db, setDb, onLogout }) {
     { key: "transactions", icon: "💳", label: "Transactions" },
     { key: "store", icon: "🏪", label: "Store" },
     { key: "records", icon: "📊", label: "Reports" },
+    { key: "tally", icon: "🏆", label: "Tally" },
     { key: "manage", icon: "⚙️", label: "Manage" },
   ];
 
@@ -1375,6 +1485,133 @@ function TeacherDashboard({ db, setDb, onLogout }) {
           </>
         )}
 
+        {/* ── TALLY TRACKER ── */}
+        {tab === "tally" && (
+          <>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:24, flexWrap:"wrap", gap:10 }}>
+              <div>
+                <div style={{ fontFamily:"'Baloo 2',cursive", fontSize:28, fontWeight:800, color:"#1e2a3a", marginBottom:4 }}>🏆 Disruption Tally Tracker</div>
+                <div style={{ fontSize:14, color:"#8a94a6", fontWeight:600 }}>Fewest tallies at the end of the year wins the prize!</div>
+              </div>
+              <Btn onClick={addTallyClass} style={{ padding:"10px 20px", fontSize:14 }}>➕ Add Class</Btn>
+            </div>
+
+            {/* Winner Banner */}
+            {(() => {
+              const totals = tallyClasses.map(c => ({ ...c, total: getTotalTallies(c) }));
+              const minTotal = Math.min(...totals.map(c => c.total));
+              const leaders = totals.filter(c => c.total === minTotal);
+              if (leaders.length === tallyClasses.length && minTotal === 0) return null;
+              return (
+                <div style={{ background: "linear-gradient(135deg, #f39c12, #e67e22)", borderRadius:18, padding:"16px 24px", marginBottom:20, color:"#fff", textAlign:"center", boxShadow:"0 6px 24px rgba(243,156,18,0.35)" }}>
+                  <div style={{ fontSize:28, marginBottom:4 }}>🥇</div>
+                  <div style={{ fontFamily:"'Baloo 2',cursive", fontSize:20, fontWeight:800 }}>
+                    {leaders.length === 1 ? `${leaders[0].name} is Winning!` : "It's a Tie!"}
+                  </div>
+                  <div style={{ fontSize:13, opacity:0.9, marginTop:4 }}>
+                    {leaders.length === 1 ? `${minTotal} total talli${minTotal !== 1 ? "es" : ""} — keep it up! 🎉` : `Both classes tied at ${minTotal} tallies`}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Class Cards */}
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(280px,1fr))", gap:20, marginBottom:24 }}>
+              {tallyClasses.map(c => {
+                const total = getTotalTallies(c);
+                const weekTotal = getWeekTallies(c);
+                const maxTallies = Math.max(...tallyClasses.map(getTotalTallies), 1);
+                const pct = Math.round((total / maxTallies) * 100);
+                return (
+                  <div key={c.id} style={{ background:"#fff", borderRadius:20, padding:24, boxShadow:"0 4px 24px rgba(0,0,0,0.08)", border:`3px solid ${c.color}20` }}>
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
+                      <div>
+                        <div style={{ fontFamily:"'Baloo 2',cursive", fontSize:22, fontWeight:800, color:"#1e2a3a" }}>{c.name}</div>
+                        <div style={{ fontSize:12, color:"#8a94a6", fontWeight:600 }}>🎁 Prize: {c.prize || "TBD"}</div>
+                      </div>
+                      <div style={{ display:"flex", gap:6 }}>
+                        <button onClick={() => { setTallyEditClass(c.id); setTallyEditName(c.name); setTallyEditPrize(c.prize); setTallyEditColor(c.color); setTallyEditOpen(true); }}
+                          style={{ background:"#f0f4f8", border:"none", borderRadius:8, padding:"6px 10px", cursor:"pointer", fontSize:12, fontWeight:700, color:"#8a94a6", fontFamily:"inherit" }}>✏️ Edit</button>
+                        <button onClick={() => deleteTallyClass(c.id)}
+                          style={{ background:"#fadbd8", border:"none", borderRadius:8, padding:"6px 10px", cursor:"pointer", fontSize:12, fontWeight:700, color:"#e74c3c", fontFamily:"inherit" }}>🗑️</button>
+                      </div>
+                    </div>
+
+                    {/* Big tally count */}
+                    <div style={{ textAlign:"center", marginBottom:16 }}>
+                      <div style={{ fontFamily:"'Baloo 2',cursive", fontSize:72, fontWeight:800, color:c.color, lineHeight:1 }}>{total}</div>
+                      <div style={{ fontSize:13, color:"#8a94a6", fontWeight:700 }}>Total Tallies</div>
+                      <div style={{ fontSize:12, color:"#8a94a6", marginTop:4 }}>This week: <strong style={{ color:c.color }}>{weekTotal}</strong></div>
+                    </div>
+
+                    {/* Progress bar — lower is better */}
+                    <div style={{ marginBottom:16 }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", fontSize:11, color:"#8a94a6", fontWeight:700, marginBottom:4 }}>
+                        <span>Disruption Level</span>
+                        <span>{pct}%</span>
+                      </div>
+                      <div style={{ height:10, background:"#f0f4f8", borderRadius:10, overflow:"hidden" }}>
+                        <div style={{ height:"100%", width:`${pct}%`, background:`linear-gradient(90deg, ${c.color}, ${c.color}99)`, borderRadius:10, transition:"width .4s" }} />
+                      </div>
+                    </div>
+
+                    {/* Tally marks display */}
+                    <div style={{ background:"#f8fafc", borderRadius:12, padding:"10px 14px", marginBottom:16, minHeight:48, display:"flex", flexWrap:"wrap", gap:3, alignItems:"center" }}>
+                      {total === 0
+                        ? <span style={{ color:"#8a94a6", fontSize:13, fontWeight:600 }}>No tallies yet! 🌟</span>
+                        : Array.from({ length: total }).map((_, i) => (
+                            <span key={i} style={{ fontSize:18, lineHeight:1 }}>{(i + 1) % 5 === 0 ? "𝍸 " : "𝍷"}</span>
+                          ))
+                      }
+                    </div>
+
+                    {/* Controls */}
+                    <div style={{ display:"flex", gap:8 }}>
+                      <button onClick={() => addTally(c.id)} style={{ flex:2, padding:"12px", background:c.color, color:"#fff", border:"none", borderRadius:12, fontFamily:"inherit", fontSize:16, fontWeight:800, cursor:"pointer" }}>+ Add Tally</button>
+                      <button onClick={() => removeTally(c.id)} disabled={total===0} style={{ flex:1, padding:"12px", background:"#f0f4f8", color:"#8a94a6", border:"none", borderRadius:12, fontFamily:"inherit", fontSize:13, fontWeight:800, cursor:total===0?"not-allowed":"pointer", opacity:total===0?0.5:1 }}>↩ Undo</button>
+                      <button onClick={() => setConfirm({ title:`Reset ${c.name}?`, msg:"This will clear all tallies for this class.", cb: async () => resetTallies(c.id) })} style={{ flex:1, padding:"12px", background:"#fadbd8", color:"#e74c3c", border:"none", borderRadius:12, fontFamily:"inherit", fontSize:13, fontWeight:800, cursor:"pointer" }}>🗑️</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Weekly log */}
+            <Card>
+              <div style={{ fontFamily:"'Baloo 2',cursive", fontSize:18, fontWeight:700, marginBottom:14 }}>📅 This Week's Log</div>
+              {(() => {
+                const days = Array.from({length:7}).map((_,i) => {
+                  const d = new Date(Date.now() - (6-i) * 86400000);
+                  return d.toISOString().slice(0,10);
+                });
+                return (
+                  <div style={{ overflowX:"auto" }}>
+                    <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+                      <thead>
+                        <tr>
+                          <th style={{ textAlign:"left", padding:"8px 12px", fontSize:11, textTransform:"uppercase", color:"#8a94a6", fontWeight:800 }}>Date</th>
+                          {tallyClasses.map(c => <th key={c.id} style={{ textAlign:"center", padding:"8px 12px", fontSize:11, textTransform:"uppercase", color:c.color, fontWeight:800 }}>{c.name}</th>)}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {days.map(day => (
+                          <tr key={day} style={{ borderTop:"1px solid #f0f4f8" }}>
+                            <td style={{ padding:"10px 12px", fontWeight:600 }}>{new Date(day + "T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}</td>
+                            {tallyClasses.map(c => {
+                              const count = c.tallies.filter(t => t.date === day).reduce((s,t)=>s+t.count,0);
+                              return <td key={c.id} style={{ textAlign:"center", padding:"10px 12px", fontWeight:700, color: count>0?c.color:"#8a94a6" }}>{count > 0 ? count : "—"}</td>;
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
+            </Card>
+          </>
+        )}
+
         {/* ── MANAGE ── */}
         {tab === "manage" && (
           <>
@@ -1544,6 +1781,24 @@ function TeacherDashboard({ db, setDb, onLogout }) {
           </div>
         </Modal>
       )}
+
+      {/* Tally Edit Modal */}
+      <Modal open={tallyEditOpen} onClose={()=>setTallyEditOpen(false)} title="✏️ Edit Class">
+        <Input label="Class Name" placeholder="e.g. 1st Period" value={tallyEditName} onChange={e=>setTallyEditName(e.target.value)} />
+        <Input label="Prize Description" placeholder="e.g. Pizza Party" value={tallyEditPrize} onChange={e=>setTallyEditPrize(e.target.value)} />
+        <div style={{ marginBottom:14 }}>
+          <div style={{ fontSize:11, fontWeight:800, textTransform:"uppercase", letterSpacing:"0.07em", color:"#8a94a6", marginBottom:8 }}>Class Color</div>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            {["#3498db","#e74c3c","#2ecc71","#f39c12","#9b59b6","#1abc9c","#e67e22","#34495e"].map(col=>(
+              <button key={col} onClick={()=>setTallyEditColor(col)} style={{ width:36, height:36, background:col, border: tallyEditColor===col?"3px solid #1e2a3a":"3px solid transparent", borderRadius:10, cursor:"pointer" }} />
+            ))}
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:10 }}>
+          <Btn onClick={()=>setTallyEditOpen(false)} color="#f0f4f8" textColor="#1e2a3a" style={{flex:1}}>Cancel</Btn>
+          <Btn onClick={saveTallyEdit} style={{flex:1}}>Save</Btn>
+        </div>
+      </Modal>
 
       {/* Payday Schedule Modal */}
       <Modal open={scheduleOpen} onClose={()=>setScheduleOpen(false)} title="⏰ Payday Schedule" subtitle="Set up automatic weekly paydays so you never forget!" wide>
