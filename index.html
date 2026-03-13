@@ -566,6 +566,10 @@ function TeacherDashboard({ db, setDb, onLogout }) {
   const [tallyEditName, setTallyEditName] = useState("");
   const [tallyEditPrize, setTallyEditPrize] = useState("");
   const [tallyEditColor, setTallyEditColor] = useState("#3498db");
+  const [tallyPastOpen, setTallyPastOpen] = useState(false);
+  const [tallyPastClass, setTallyPastClass] = useState(null);
+  const [tallyPastDate, setTallyPastDate] = useState("");
+  const [tallyPastCount, setTallyPastCount] = useState("1");
   const [reportView, setReportView] = useState("transactions");
   // Sort state
   const [txSort, setTxSort] = useState("date_desc");
@@ -650,6 +654,45 @@ function TeacherDashboard({ db, setDb, onLogout }) {
     localStorage.setItem("tallyClasses", JSON.stringify(updated));
     showSnack(`${newClass.name} added!`, "success");
   };
+  const addPastTally = () => {
+    if (!tallyPastDate) { showSnack("Please select a date.", "error"); return; }
+    const count = parseInt(tallyPastCount) || 1;
+    if (count < 1) { showSnack("Enter at least 1 tally.", "error"); return; }
+    const today = new Date().toISOString().slice(0, 10);
+    if (tallyPastDate > today) { showSnack("Date cannot be in the future.", "error"); return; }
+    const updated = tallyClasses.map(c => {
+      if (c.id !== tallyPastClass) return c;
+      // Remove existing entry for that date then add new one
+      const filtered = c.tallies.filter(t => t.date !== tallyPastDate);
+      const existing = c.tallies.filter(t => t.date === tallyPastDate).reduce((s,t)=>s+t.count,0);
+      return { ...c, tallies: [...filtered, { date: tallyPastDate, count: existing + count }] };
+    });
+    setTallyClasses(updated);
+    localStorage.setItem("tallyClasses", JSON.stringify(updated));
+    showSnack(`Added ${count} talli${count!==1?"es":"s"} for ${tallyPastDate}!`, "success");
+    setTallyPastCount("1");
+  };
+
+  const removePastTally = (classId, date) => {
+    const updated = tallyClasses.map(c => {
+      if (c.id !== classId) return c;
+      const existing = c.tallies.find(t => t.date === date);
+      if (!existing || existing.count <= 1) {
+        return { ...c, tallies: c.tallies.filter(t => t.date !== date) };
+      }
+      return { ...c, tallies: c.tallies.map(t => t.date === date ? { ...t, count: t.count - 1 } : t) };
+    });
+    setTallyClasses(updated);
+    localStorage.setItem("tallyClasses", JSON.stringify(updated));
+  };
+
+  const clearPastDate = (classId, date) => {
+    const updated = tallyClasses.map(c => c.id === classId ? { ...c, tallies: c.tallies.filter(t => t.date !== date) } : c);
+    setTallyClasses(updated);
+    localStorage.setItem("tallyClasses", JSON.stringify(updated));
+    showSnack("Day cleared.", "success");
+  };
+
   const deleteTallyClass = (classId) => {
     if (tallyClasses.length <= 1) { showSnack("You need at least one class.", "error"); return; }
     const cls = tallyClasses.find(c => c.id === classId);
@@ -1566,24 +1609,27 @@ function TeacherDashboard({ db, setDb, onLogout }) {
                     </div>
 
                     {/* Controls */}
-                    <div style={{ display:"flex", gap:8 }}>
+                    <div style={{ display:"flex", gap:8, marginBottom:8 }}>
                       <button onClick={() => addTally(c.id)} style={{ flex:2, padding:"12px", background:c.color, color:"#fff", border:"none", borderRadius:12, fontFamily:"inherit", fontSize:16, fontWeight:800, cursor:"pointer" }}>+ Add Tally</button>
                       <button onClick={() => removeTally(c.id)} disabled={total===0} style={{ flex:1, padding:"12px", background:"#f0f4f8", color:"#8a94a6", border:"none", borderRadius:12, fontFamily:"inherit", fontSize:13, fontWeight:800, cursor:total===0?"not-allowed":"pointer", opacity:total===0?0.5:1 }}>↩ Undo</button>
                       <button onClick={() => setConfirm({ title:`Reset ${c.name}?`, msg:"This will clear all tallies for this class.", cb: async () => resetTallies(c.id) })} style={{ flex:1, padding:"12px", background:"#fadbd8", color:"#e74c3c", border:"none", borderRadius:12, fontFamily:"inherit", fontSize:13, fontWeight:800, cursor:"pointer" }}>🗑️</button>
                     </div>
+                    <button onClick={() => { setTallyPastClass(c.id); setTallyPastDate(new Date().toISOString().slice(0,10)); setTallyPastCount("1"); setTallyPastOpen(true); }}
+                      style={{ width:"100%", padding:"10px", background:"#f0f4f8", color:"#8a94a6", border:"2px dashed #e4e9f0", borderRadius:12, fontFamily:"inherit", fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                      📅 Add Tallies for a Past Date
+                    </button>
                   </div>
                 );
               })}
             </div>
 
-            {/* Weekly log */}
+            {/* Full Tally Log */}
             <Card>
-              <div style={{ fontFamily:"'Baloo 2',cursive", fontSize:18, fontWeight:700, marginBottom:14 }}>📅 This Week's Log</div>
+              <div style={{ fontFamily:"'Baloo 2',cursive", fontSize:18, fontWeight:700, marginBottom:14 }}>📅 Full Tally Log</div>
               {(() => {
-                const days = Array.from({length:7}).map((_,i) => {
-                  const d = new Date(Date.now() - (6-i) * 86400000);
-                  return d.toISOString().slice(0,10);
-                });
+                // Get all unique dates across all classes, sorted newest first
+                const allDates = [...new Set(tallyClasses.flatMap(c => c.tallies.map(t => t.date)))].sort((a,b) => b.localeCompare(a));
+                if (allDates.length === 0) return <div style={{ textAlign:"center", padding:24, color:"#8a94a6", fontWeight:600 }}>No tally records yet.</div>;
                 return (
                   <div style={{ overflowX:"auto" }}>
                     <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
@@ -1591,16 +1637,30 @@ function TeacherDashboard({ db, setDb, onLogout }) {
                         <tr>
                           <th style={{ textAlign:"left", padding:"8px 12px", fontSize:11, textTransform:"uppercase", color:"#8a94a6", fontWeight:800 }}>Date</th>
                           {tallyClasses.map(c => <th key={c.id} style={{ textAlign:"center", padding:"8px 12px", fontSize:11, textTransform:"uppercase", color:c.color, fontWeight:800 }}>{c.name}</th>)}
+                          <th style={{ textAlign:"center", padding:"8px 12px", fontSize:11, textTransform:"uppercase", color:"#8a94a6", fontWeight:800 }}>Actions</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {days.map(day => (
+                        {allDates.map(day => (
                           <tr key={day} style={{ borderTop:"1px solid #f0f4f8" }}>
-                            <td style={{ padding:"10px 12px", fontWeight:600 }}>{new Date(day + "T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}</td>
+                            <td style={{ padding:"10px 12px", fontWeight:600 }}>{new Date(day + "T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric",year:"numeric"})}</td>
                             {tallyClasses.map(c => {
                               const count = c.tallies.filter(t => t.date === day).reduce((s,t)=>s+t.count,0);
-                              return <td key={c.id} style={{ textAlign:"center", padding:"10px 12px", fontWeight:700, color: count>0?c.color:"#8a94a6" }}>{count > 0 ? count : "—"}</td>;
+                              return (
+                                <td key={c.id} style={{ textAlign:"center", padding:"10px 12px" }}>
+                                  {count > 0 ? (
+                                    <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
+                                      <span style={{ fontWeight:800, color:c.color, fontSize:16 }}>{count}</span>
+                                      <button onClick={()=>removePastTally(c.id, day)} style={{ background:"#fadbd8", border:"none", borderRadius:6, padding:"2px 6px", cursor:"pointer", fontSize:11, fontWeight:800, color:"#e74c3c" }}>-1</button>
+                                    </div>
+                                  ) : <span style={{ color:"#e4e9f0", fontWeight:700 }}>—</span>}
+                                </td>
+                              );
                             })}
+                            <td style={{ textAlign:"center", padding:"10px 12px" }}>
+                              <button onClick={() => { setTallyPastClass(tallyClasses[0].id); setTallyPastDate(day); setTallyPastCount("1"); setTallyPastOpen(true); }}
+                                style={{ background:"#d6eaf8", border:"none", borderRadius:6, padding:"4px 8px", cursor:"pointer", fontSize:11, fontWeight:800, color:"#1a5276", fontFamily:"inherit", marginRight:4 }}>➕ Add</button>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -1781,6 +1841,42 @@ function TeacherDashboard({ db, setDb, onLogout }) {
           </div>
         </Modal>
       )}
+
+      {/* Past Tally Modal */}
+      <Modal open={tallyPastOpen} onClose={()=>setTallyPastOpen(false)} title="📅 Add Past Tallies" subtitle="Record tallies for a previous date." wide>
+        <div style={{ marginBottom:14 }}>
+          <div style={{ fontSize:11, fontWeight:800, textTransform:"uppercase", letterSpacing:"0.07em", color:"#8a94a6", marginBottom:8 }}>Select Class</div>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            {tallyClasses.map(c => (
+              <button key={c.id} onClick={()=>setTallyPastClass(c.id)}
+                style={{ padding:"9px 16px", background: tallyPastClass===c.id ? c.color : "#f0f4f8", color: tallyPastClass===c.id ? "#fff" : "#8a94a6", border:"none", borderRadius:10, fontFamily:"inherit", fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                {c.name}
+              </button>
+            ))}
+          </div>
+        </div>
+        <Input label="Date" type="date" value={tallyPastDate} onChange={e=>setTallyPastDate(e.target.value)} style={{ fontSize:15 }} />
+        <div style={{ marginBottom:14 }}>
+          <div style={{ fontSize:11, fontWeight:800, textTransform:"uppercase", letterSpacing:"0.07em", color:"#8a94a6", marginBottom:8 }}>Number of Tallies to Add</div>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:10 }}>
+            {[1,2,3,4,5,10].map(n => (
+              <button key={n} onClick={()=>setTallyPastCount(String(n))}
+                style={{ width:44, height:44, background: tallyPastCount===String(n)?"#1e2a3a":"#f0f4f8", color: tallyPastCount===String(n)?"#fff":"#8a94a6", border:"none", borderRadius:10, fontFamily:"inherit", fontSize:15, fontWeight:800, cursor:"pointer" }}>{n}</button>
+            ))}
+          </div>
+          <Input label="Or type a custom number" type="number" min="1" placeholder="e.g. 7" value={tallyPastCount} onChange={e=>setTallyPastCount(e.target.value)} />
+        </div>
+        {tallyPastClass && tallyPastDate && (() => {
+          const cls = tallyClasses.find(c=>c.id===tallyPastClass);
+          const existing = cls ? cls.tallies.filter(t=>t.date===tallyPastDate).reduce((s,t)=>s+t.count,0) : 0;
+          if (existing > 0) return <div style={{ background:"#fef9e7", border:"1px solid #f9e79f", borderRadius:10, padding:"10px 14px", fontSize:13, color:"#9a7d0a", fontWeight:600, marginBottom:14 }}>⚠️ {cls?.name} already has <strong>{existing}</strong> talli{existing!==1?"es":"s"} on this date. Adding will increase the total.</div>;
+          return null;
+        })()}
+        <div style={{ display:"flex", gap:10 }}>
+          <Btn onClick={()=>setTallyPastOpen(false)} color="#f0f4f8" textColor="#1e2a3a" style={{flex:1}}>Cancel</Btn>
+          <Btn onClick={()=>{addPastTally();}} style={{flex:1}}>✅ Add Tallies</Btn>
+        </div>
+      </Modal>
 
       {/* Tally Edit Modal */}
       <Modal open={tallyEditOpen} onClose={()=>setTallyEditOpen(false)} title="✏️ Edit Class">
